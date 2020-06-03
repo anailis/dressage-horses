@@ -1,0 +1,24 @@
+---
+title: "Data Cleaning"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Description of the Data
+
+Data were scraped from the web into a SQLite3 database with two tables: one containing show results and one containing pedigree data.
+
+``` {r data extraction}
+# get raw data from sqlite3 database
+library(tidyverse)
+library(RSQLite)
+conn <- dbConnect(RSQLite::SQLite(), "dressage.db")
+
+ped <- dbGetQuery(conn,'SELECT * FROM pedigree')
+shows <- dbGetQuery(conn, 'SELECT * FROM show_results')
+```
+
+The pedigree table contains 1081 rows and 8 columns. Each row represents a horse, who is identified either by the column `horse_id` or the column `horse_ueln`. The goal of tidying is to obtain a pedigree dataframe where every individual has a single, unique identifier and is contained within their own row. This includes individuals who are at the outset only included in the `sire_id`/`sire_ueln` or `dam_id`/`dam_ueln` columns. Duplicate data is likely to be a problem due to the scraping method used to obtain the data - duplicate rows should be identified and removed. NA should be consistently used to represent missing values (e.g. absence of recorded parents).`sex` should be recoded as 0 for females, 1 for males, and NA for missing data. `dob` refers to the horse's date of birth, which is given in one of two formats in the raw dataframe: DD/MM/YYYY or DD/MM/YYYY (age). These will be tidied into year of birth for each individual (YYYY).  
