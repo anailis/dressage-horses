@@ -21,4 +21,48 @@ ped <- dbGetQuery(conn,'SELECT * FROM pedigree')
 shows <- dbGetQuery(conn, 'SELECT * FROM show_results')
 ```
 
+``` {r describing ped}
+head(ped)
+dim(ped)
+```
+
 The pedigree table contains 1081 rows and 8 columns. Each row represents a horse, who is identified either by the column `horse_id` or the column `horse_ueln`. The goal of tidying is to obtain a pedigree dataframe where every individual has a single, unique identifier and is contained within their own row. This includes individuals who are at the outset only included in the `sire_id`/`sire_ueln` or `dam_id`/`dam_ueln` columns. Duplicate data is likely to be a problem due to the scraping method used to obtain the data - duplicate rows should be identified and removed. NA should be consistently used to represent missing values (e.g. absence of recorded parents).`sex` should be recoded as 0 for females, 1 for males, and NA for missing data. `dob` refers to the horse's date of birth, which is given in one of two formats in the raw dataframe: DD/MM/YYYY or DD/MM/YYYY (age). These will be tidied into year of birth for each individual (YYYY).  
+
+``` {r describing shows}
+head(shows)
+dim(shows)
+```
+
+The shows table has 18033 rows and 9 columns. Each row represents a single show result for a single horse/rider combination. In this table, horses are described only by `horse_id`, and thus this is the only way to link them to the pedigree table. Riders are identified by their unique `rider_id`. `sex` and `dob` must be encoded as they are in the pedigree table and will be used as a quality control measures to ensure agreement between records with the same `horse_id` in both tables. `shows` also contains: the country code of the nation in which the show took place (`location`), the level of event (`event_type`), the title of the competition (`comp_title`), the position of the combination (`position`) and their score (`score`).
+
+## Clean the Pedigree Table
+
+First, I will replace blank cells with NA and remove any rows which appear multiple times. 76 duplicate rows are removed.
+
+``` {r remove duplicates}
+ped <- as_tibble(ped)
+ped[ped==''] <- NA
+
+ped <- ped %>%
+  mutate_all(str_trim) %>%
+  distinct()
+
+dim(ped)
+```
+
+Next, I will standardise the sexes and obtain year of birth. Although the distinction between geldings and stallions may be informative, 140 male individuals are not distinguished as stallion or gelding. For now, I will collapse all males into a single category (1), but I retain a copy of the `sex` column (`sex_raw`) in case I would like to come back to this. 
+
+``` {r standardise sex}
+table(ped$sex)
+
+ped$sex_raw <- ped$sex
+
+ped <- ped %>%
+  mutate(sex=replace(sex, sex == "Mare", "0")) %>%
+  mutate(sex=replace(sex, sex == "Stallion", "1")) %>%
+  mutate(sex=replace(sex, sex == "Gelding", "1")) %>%
+  mutate(sex=replace(sex, sex == "Male", "1")) %>%
+  mutate(sex=replace(sex, sex == "Female", "0"))
+
+table(ped$sex)
+```
