@@ -15,6 +15,7 @@ Data were scraped from the web into a SQLite3 database with two tables: one cont
 # get raw data from sqlite3 database
 library(tidyverse)
 library(RSQLite)
+library(lubridate)
 conn <- dbConnect(RSQLite::SQLite(), "dressage.db")
 
 ped <- dbGetQuery(conn,'SELECT * FROM pedigree')
@@ -50,6 +51,8 @@ ped <- ped %>%
 dim(ped)
 ```
 
+### Clean Sex Column
+
 Next, I will standardise the sexes and obtain year of birth. Although the distinction between geldings and stallions may be informative, 140 male individuals are not distinguished as stallion or gelding. For now, I will collapse all males into a single category (1), but I retain a copy of the `sex` column (`sex_raw`) in case I would like to come back to this. 
 
 ``` {r standardise sex}
@@ -66,3 +69,47 @@ ped <- ped %>%
 
 table(ped$sex)
 ```
+
+This leaves us with 280 females, 701 males, and no individuals missing sex. 
+
+### Create yob Column
+
+I obtain the year of birth for each individual from the `dob` column. 
+
+``` {r create yob}
+tail(ped$dob)
+
+ped$dob <- str_trim(str_remove(ped$dob, "\\(.*"))
+
+tail(ped$dob)
+
+ped$yob <- year(dmy(ped$dob))
+
+head(ped$yob, n = 20)
+head(ped$dob, n = 20)
+```
+
+### Individuals Without Rows
+
+It is likely that there are some individuals listed as sires or dams that do not have their own rows. These individuals will be considered as part of the base generation - they must still have their own records, with all parental IDs listed as NA. Having two ID systems poses a problem: sires and dams may have an id, a ueln, or both.
+
+The aggregation plot below shows a concerning trend: individuals favour id identifiers, whereas parents favour ueln identifiers. It is possible that we have the same individual represented multiple times in the data, under two different identifiers. We can see from the plot that there are no cases when a sire or dam has both an id and a ueln. However, if an individual is a dam/sire but also has their own row, it may be possible to infer missing ids or uelns, as in the vast majority of cases (~87%) horses with their own rows have both uelns and ids.
+
+``` {r id missingness}
+library(VIM)
+
+id_missingness <- ped %>%
+  select(horse_id, horse_ueln, sire_id, sire_ueln, dam_id, dam_ueln)
+
+aggr(id_missingness, numbers = T, prop = c(T, F))
+```
+
+Given that there are no cases where a sire and dam have both a ueln and an id, we can paste these columns together to make the analysis easier. 
+
+``` {r create new sire and dam cols}
+ped <- ped %>% 
+  mutate(dam = coalesce(dam_id, dam_ueln)) %>%
+  mutate(sire = coalesce(sire_id, sire_ueln))
+```
+
+### Examine Missingness 
