@@ -49,6 +49,8 @@ ped <- ped %>%
   distinct()
 
 dim(ped)
+
+ped$horse_id <- str_trim(str_remove(ped$horse_id, "\\(.*"))
 ```
 
 ### Clean Sex Column
@@ -104,12 +106,91 @@ id_missingness <- ped %>%
 aggr(id_missingness, numbers = T, prop = c(T, F))
 ```
 
-Given that there are no cases where a sire and dam have both a ueln and an id, we can paste these columns together to make the analysis easier. 
+Given that there are no cases where a sire and dam have both a ueln and an id, we can paste these columns together to make the analysis easier. This leaves us with 148 dams and 185 sires in our dataset. Of these, 64 of the dams also have their own record and 100 of the sires have their own record. 
 
 ``` {r create new sire and dam cols}
 ped <- ped %>% 
   mutate(dam = coalesce(dam_id, dam_ueln)) %>%
   mutate(sire = coalesce(sire_id, sire_ueln))
+
+length(unique(na.omit(ped$dam)))
+length(unique(na.omit(ped$sire)))
+
+ped %>% 
+  filter(!is.na(dam)) %>%
+  select(dam) %>%
+  filter(dam %in% ped$horse_id | dam %in% ped$horse_ueln) %>%
+  distinct() %>%
+  count()
+
+ped %>% 
+  filter(!is.na(sire)) %>%
+  filter(sire %in% ped$horse_id | sire %in% ped$horse_ueln) %>%
+  select(sire) %>%
+  distinct() %>%
+  count()
 ```
+
+A test of quality is whether the sex is as expected for all of these individuals. Surprisingly, 8 individuals listed as dams are listed as male. This investigation also flags up another potential issue: when we retreive the records of these 64 dams, we obtain 67 rows. This is most likely an issue with the double ID system (individuals or their parents are represented more than once, using different combinations of IDs).
+
+Indeed, although there are 67 unique records, we observe duplicate UELNs and IDs when we look at these individually. Some of these can be removed by calling `distinct()` after filtering out the parental columns, which tells us that a single individual may currently have multiple records with different parents recorded (e.g. because a different identifier is used to refer to the parent in different cases). This issue of duplication is extremely prevalent in this dataset because of the nature of identifier system used by the source, and I will return to this to do further corrections later on. 
+
+Likewise for the sires, 100 sires correspond to 114 rows and duplicated UELNs and IDs are present. However, unlike the mares, all of the sires are listed as males.
+
+``` {r check for correct sex}
+## dams
+dam_ids <- ped %>% 
+  filter(!is.na(dam)) %>%
+  select(dam) %>%
+  distinct()
+
+dam_records <- ped %>% 
+  filter(horse_id %in% dam_ids$dam | horse_ueln %in% dam_ids$dam) %>%
+  select(horse_id, horse_ueln, sex, sex_raw)
+
+nrow(dam_records)
+aggr(dam_records, numbers = T, prop = c(T, F))
+  
+sum(table(dam_records$horse_id) > 1)
+sum(table(dam_records$horse_ueln) > 1)
+
+table(dam_records$sex)
+table(dam_records$sex_raw)
+
+## sires
+sire_ids <- ped %>% 
+  filter(!is.na(sire)) %>%
+  select(sire) %>%
+  distinct()
+
+sire_records <- ped %>% 
+  filter(horse_id %in% sire_ids$sire | horse_ueln %in% sire_ids$sire) %>%
+  select(horse_id, horse_ueln, sex, sex_raw)
+
+nrow(sire_records)
+aggr(sire_records, numbers = T, prop = c(T, F))
+  
+sum(table(sire_records$horse_id) > 1)
+sum(table(sire_records$horse_ueln) > 1)
+
+table(sire_records$sex)
+```
+
+#### Dams Listed as Males
+
+I will have a brief look into how these males mislabelled as dams (or vice versa) may have arisen. 
+
+``` {r offspring of mislabelled dams}
+mislabelled_dams <- dam_records %>%
+  filter(sex == 1) %>%
+  select(horse_id, horse_ueln)
+
+mislabelled_dams
+
+ped %>%
+  filter(dam %in% mislabelled_dams$horse_id | dam %in% mislabelled_dams$horse_ueln)
+```
+
+### A Closer Look at Duplicates
 
 ### Examine Missingness 
