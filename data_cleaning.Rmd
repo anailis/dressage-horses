@@ -41,6 +41,8 @@ The shows table has 18033 rows and 9 columns. Each row represents a single show 
 First, I will replace blank cells with NA and remove any rows which appear multiple times. 76 duplicate rows are removed.
 
 ``` {r remove duplicates}
+ped$horse_id <- str_trim(str_remove(ped$horse_id, "\\(.*"))
+
 ped <- as_tibble(ped)
 ped[ped==''] <- NA
 
@@ -49,8 +51,6 @@ ped <- ped %>%
   distinct()
 
 dim(ped)
-
-ped$horse_id <- str_trim(str_remove(ped$horse_id, "\\(.*"))
 ```
 
 ### Clean Sex Column
@@ -89,6 +89,61 @@ ped$yob <- year(dmy(ped$dob))
 
 head(ped$yob, n = 20)
 head(ped$dob, n = 20)
+```
+
+### Dealing with Duplication 
+
+Although initially I filtered out all identical rows, there is still a problem with duplicate IDs and UELNs arising in the data. 35 UELNs are present more than once in `horse_ueln`, and 41 IDs are present more than once in `horse_id`. I am going to remove this issue before proceeding any further. 
+
+``` {r id duplicates}
+sum(table(ped$horse_id) > 1)
+sum(table(ped$horse_ueln) > 1)
+
+dup_uelns <- ped %>%
+  filter(!is.na(horse_ueln)) %>%
+  count(horse_ueln) %>%
+  filter(n > 1) %>%
+  pull(horse_ueln)
+
+dup_ids <- ped %>%
+  filter(!is.na(horse_id)) %>%
+  count(horse_id) %>%
+  filter(n > 1) %>%
+  pull(horse_id)
+
+ped %>%
+  filter(horse_id %in% dup_ids) %>%
+  arrange(horse_id)
+```
+
+I prepare a function that tries to identify what rows cause these duplicates to differ. 
+
+``` {r}
+compareDuplicates <- function(dup_rows) {
+  result <- matrix(ncol = ncol(dup_rows), dimnames = list(NULL, colnames(dup_rows)))
+  for (mmm in 1:nrow(dup_rows)) {
+    for (lll in 1:nrow(dup_rows)) {
+      if (mmm != lll & mmm < lll) {
+        result_row <- matrix(ncol = ncol(dup_rows), dimnames = list(NULL, colnames(dup_rows)))
+        for (jjj in 1:ncol(dup_rows)) {
+          result_row[,jjj] <- dup_rows[lll,jjj] == dup_rows[mmm,jjj]
+        }
+        result <- rbind(result, result_row)
+      }
+    }
+  }
+  return(as.data.frame(result[2:nrow(result),]))
+}
+
+ped[ped$horse_id=="104LO87",]
+# not comparing 1 and 2 because assigning to result[mmm,jjj] is overwriting the first row
+compareDuplicates(ped[ped$horse_id=="104LO87",])
+
+diffs <- matrix()
+for (iii in dup_ids) {
+  print(compareDuplicates(ped[ped$horse_id==iii,]))
+}
+
 ```
 
 ### Individuals Without Rows
@@ -142,10 +197,11 @@ Likewise for the sires, 100 sires correspond to 114 rows and duplicated UELNs an
 dam_ids <- ped %>% 
   filter(!is.na(dam)) %>%
   select(dam) %>%
-  distinct()
+  distinct() %>%
+  pull(dam)
 
 dam_records <- ped %>% 
-  filter(horse_id %in% dam_ids$dam | horse_ueln %in% dam_ids$dam) %>%
+  filter(horse_id %in% dam_ids | horse_ueln %in% dam_ids) %>%
   select(horse_id, horse_ueln, sex, sex_raw)
 
 nrow(dam_records)
@@ -161,10 +217,11 @@ table(dam_records$sex_raw)
 sire_ids <- ped %>% 
   filter(!is.na(sire)) %>%
   select(sire) %>%
-  distinct()
+  distinct() %>%
+  pull(sire)
 
 sire_records <- ped %>% 
-  filter(horse_id %in% sire_ids$sire | horse_ueln %in% sire_ids$sire) %>%
+  filter(horse_id %in% sire_ids | horse_ueln %in% sire_ids) %>%
   select(horse_id, horse_ueln, sex, sex_raw)
 
 nrow(sire_records)
@@ -178,17 +235,22 @@ table(sire_records$sex)
 
 #### Dams Listed as Males
 
-I will have a brief look into how these males mislabelled as dams (or vice versa) may have arisen. 
+I will have a brief look into how these 6 males mislabelled as dams (or vice versa) may have arisen. 
 
 ``` {r offspring of mislabelled dams}
 mislabelled_dams <- dam_records %>%
   filter(sex == 1) %>%
-  select(horse_id, horse_ueln)
+  select(horse_id, horse_ueln) %>%
+  distinct()
 
 mislabelled_dams
 
 ped %>%
   filter(dam %in% mislabelled_dams$horse_id | dam %in% mislabelled_dams$horse_ueln)
+
+ped %>%
+  filter(horse_id %in% dup_ids) %>%
+  arrange(horse_id) 
 ```
 
 ### A Closer Look at Duplicates
