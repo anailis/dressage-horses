@@ -114,13 +114,18 @@ dup_ids <- ped %>%
 ped %>%
   filter(horse_id %in% dup_ids) %>%
   arrange(horse_id)
+
+ped %>% 
+  filter(horse_ueln %in% dup_uelns) %>%
+  arrange(horse_ueln)
 ```
 
-I prepare a series of functions that identify where duplicated rows differ. 
+I prepare a series of functions that identify where duplicated rows differ (NA in both rows is counted as a match). 
 
-``` {r}
-findDupRows <- function(id, df) {
-  return(df[df$horse_id==id,])
+``` {r identify source of duplication}
+getDupRows <- function(id, df, id_type) {
+  df <- df[!is.na(df[[id_type]]),]
+  return(df[df[[id_type]]==id,])
 }
 
 makeOutputMatrix <- function(df) {
@@ -131,7 +136,11 @@ makeOutputMatrix <- function(df) {
 identifyMatches <- function(row1, row2, outmatrix) {
   for (lll in 1:ncol(row1)) {
     if (is.na(row1[,lll] == row2[,lll])) {
-      outmatrix[lll, "NA"] <- outmatrix[lll, "NA"] + 1
+      if (is.na(row1[,lll]) & is.na(row2[,lll])) {
+        outmatrix[lll, "Match"] <- outmatrix[lll, "Match"] + 1
+      } else {
+        outmatrix[lll, "NA"] <- outmatrix[lll, "NA"] + 1 
+      }
     } else {
       if (row1[,lll] == row2[,lll]) {
         outmatrix[lll, "Match"] <- outmatrix[lll, "Match"] + 1
@@ -143,9 +152,9 @@ identifyMatches <- function(row1, row2, outmatrix) {
   return(outmatrix)
 }
 
-compareDupRows <- function(id, df) {
+compareDupRows <- function(id, df, id_type) {
   outmatrix <- makeOutputMatrix(df)
-  duprows <- findDupRows(id, df)
+  duprows <- getDupRows(id, df, id_type)
   for (iii in 1:nrow(duprows)) {
     for (jjj in 1:nrow(duprows)) {
       if (iii < jjj) {
@@ -156,16 +165,68 @@ compareDupRows <- function(id, df) {
   return(outmatrix)
 }
 
-compareAllDupRows <- function(dupids, df) {
+compareAllDupRows <- function(dupids, df, id_type) {
   outmatrix <- makeOutputMatrix(df)
   for (id in dupids) {
-    temp <- compareDupRows(id, df)
+    temp <- compareDupRows(id, df, id_type)
     outmatrix <- outmatrix + temp
   }
   return(outmatrix)
 }
 
-compareAllDupRows(dup_ids, ped)
+compareAllDupRows(dup_ids, ped, "horse_id") + compareAllDupRows(dup_uelns, ped, "horse_ueln")
+```
+
+An ID may have one record that contains `dam_ueln`, `horse_ueln`, `sire_id`, or `dam_id` but is NA for this field in the duplicated record. In such cases, it makes sense to remove the record that has the least information. Duplicated IDs are most likely to differ in their `dam_ueln` and their `sex_raw`, even when both of these fields have data. In the case of `sex_raw`, this is likely to be due to a coding of the same individual as `stallion` and `male`, for example, as all duplicated records are in agreement about cleaned sex. Therefore, we can ignore this. More concerning is the inconsistency in dam ids. 
+
+``` {r}
+#remove rows which differ only in sex
+
+
+#remove rows which have less data than their duplicate 
+idLessInfoRows <- function(id, df, id_type) {
+  df <- df[!is.na(df[[id_type]]),]
+  rowNums <- which(df[[id_type]]==id)
+  for (iii in rowNums) {
+    for (jjj in rowNums) {
+      if (iii < jjj) {
+        if (sum(is.na(df[iii,])) == sum(is.na(df[jjj,]))) {
+        } else {
+          if (sum(is.na(df[iii,])) > sum(is.na(df[jjj,]))) {
+            return(iii)
+          }
+          if (sum(is.na(df[iii,])) < sum(is.na(df[jjj,]))) {
+            return(jjj)
+          }
+        }
+      }
+    }
+  }
+}
+
+listLessInfoRows <- function(dupids, df, id_type) {
+  to_remove <- list()
+  counter <- 1
+  for (id in dupids) {
+    to_remove[[counter]] <- idLessInfoRows(id, df, id_type)
+    counter <- counter + 1
+  }
+  return(compact(to_remove))
+}
+
+rmLessInfoRows <- function(dupids, df, id_type) {
+  to_remove <- listLessInfoRows(dupids, df, id_type)
+  for (iii in 1:length(to_remove)) {
+    df <- df[-c(to_remove[[iii]]),]
+  }
+  return(df)
+}
+
+test <- listLessInfoRows(dup_ids, ped, "horse_id")
+length(listLessInfoRows(dup_uelns, ped, "horse_ueln"))
+
+ped <- rmLessInfoRows(dup_ids, ped, "horse_id")
+ped <- rmLessInfoRows(dup_uelns, ped, "horse_ueln")
 ```
 
 ### Individuals Without Rows
@@ -275,6 +336,4 @@ ped %>%
   arrange(horse_id) 
 ```
 
-### A Closer Look at Duplicates
 
-### Examine Missingness 
