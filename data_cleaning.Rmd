@@ -116,34 +116,56 @@ ped %>%
   arrange(horse_id)
 ```
 
-I prepare a function that tries to identify what rows cause these duplicates to differ. 
+I prepare a series of functions that identify where duplicated rows differ. 
 
 ``` {r}
-compareDuplicates <- function(dup_rows) {
-  result <- matrix(ncol = ncol(dup_rows), dimnames = list(NULL, colnames(dup_rows)))
-  for (mmm in 1:nrow(dup_rows)) {
-    for (lll in 1:nrow(dup_rows)) {
-      if (mmm != lll & mmm < lll) {
-        result_row <- matrix(ncol = ncol(dup_rows), dimnames = list(NULL, colnames(dup_rows)))
-        for (jjj in 1:ncol(dup_rows)) {
-          result_row[,jjj] <- dup_rows[lll,jjj] == dup_rows[mmm,jjj]
-        }
-        result <- rbind(result, result_row)
+findDupRows <- function(id, df) {
+  return(df[df$horse_id==id,])
+}
+
+makeOutputMatrix <- function(df) {
+  matrix(0, ncol = 3, nrow = ncol(df), 
+         dimnames = list(c(colnames(df)), c("Match", "Different", "NA")))
+}
+
+identifyMatches <- function(row1, row2, outmatrix) {
+  for (lll in 1:ncol(row1)) {
+    if (is.na(row1[,lll] == row2[,lll])) {
+      outmatrix[lll, "NA"] <- outmatrix[lll, "NA"] + 1
+    } else {
+      if (row1[,lll] == row2[,lll]) {
+        outmatrix[lll, "Match"] <- outmatrix[lll, "Match"] + 1
+      } else {
+        outmatrix[lll, "Different"] <- outmatrix[lll, "Different"] + 1
       }
     }
   }
-  return(as.data.frame(result[2:nrow(result),]))
+  return(outmatrix)
 }
 
-ped[ped$horse_id=="104LO87",]
-# not comparing 1 and 2 because assigning to result[mmm,jjj] is overwriting the first row
-compareDuplicates(ped[ped$horse_id=="104LO87",])
-
-diffs <- matrix()
-for (iii in dup_ids) {
-  print(compareDuplicates(ped[ped$horse_id==iii,]))
+compareDupRows <- function(id, df) {
+  outmatrix <- makeOutputMatrix(df)
+  duprows <- findDupRows(id, df)
+  for (iii in 1:nrow(duprows)) {
+    for (jjj in 1:nrow(duprows)) {
+      if (iii < jjj) {
+        outmatrix <- identifyMatches(duprows[iii,], duprows[jjj,], outmatrix)
+      }
+    }
+  }
+  return(outmatrix)
 }
 
+compareAllDupRows <- function(dupids, df) {
+  outmatrix <- makeOutputMatrix(df)
+  for (id in dupids) {
+    temp <- compareDupRows(id, df)
+    outmatrix <- outmatrix + temp
+  }
+  return(outmatrix)
+}
+
+compareAllDupRows(dup_ids, ped)
 ```
 
 ### Individuals Without Rows
