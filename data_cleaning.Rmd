@@ -413,4 +413,39 @@ ped <- rbind(ped, data.frame(horse_id = NA, sex = 1, horse_ueln = sires_wo_rows,
 
 ## Clean the Shows Table
 
+To begin, I will assign each show a unique identifier. Seven of the individuals with show results in this table are not included in the pedigree table, and are thus discarded. I also remove team show results, as these are the sum of all individuals in the team.
+
+``` {r}
+head(shows)
+summary(shows)
+
+shows$show_id <- c(1:nrow(shows))
+shows$score <- as.numeric(shows$score)
+
+shows <- shows %>% 
+  filter(horse_id %in% ped$horse_id)
+
+shows %>%
+  group_by(comp_title) %>%
+  summarise(mean = mean(score, na.rm = T)) %>%
+  filter(mean > 100)
+  
+shows <- shows %>%
+  filter(!str_detect(comp_title, "Team"))
+```
+
+I investigate other sources of outliers in the data.
+
+
+
+
+
+
+
+
+
+
+
+
+
 
