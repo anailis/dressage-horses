@@ -293,6 +293,24 @@ pass3
 The current dataset will be set aside, so that informative missingness can be assessed at a later point. Ultimately, I will not use dams in the final analysis - I will restrict myself to sires. This is because records for dams are error-prone: mislabelled sexes and multiple dam records for single individuals are frequent. 
 
 ``` {r}
+dup_uelns <- ped %>%
+  filter(!is.na(horse_ueln)) %>%
+  count(horse_ueln) %>%
+  filter(n > 1) %>%
+  pull(horse_ueln)
+
+dup_ids <- ped %>%
+  filter(!is.na(horse_id)) %>%
+  count(horse_id) %>%
+  filter(n > 1) %>%
+  pull(horse_id)
+
+pass4 <- compareAllDupRows(dup_ids, ped, "horse_id") + compareAllDupRows(dup_uelns, ped, "horse_ueln")
+pass4
+
+ped %>%
+  filter((horse_id %in% dup_ids) | horse_ueln %in% dup_uelns) 
+
 #for future analyses of these individuals 
 ped_dups <- ped
 ped <- ped %>%
@@ -415,7 +433,7 @@ ped <- rbind(ped, data.frame(horse_id = NA, sex = 1, horse_ueln = sires_wo_rows,
 
 To begin, I will assign each show a unique identifier. Seven of the individuals with show results in this table are not included in the pedigree table, and are thus discarded. I also remove team show results, as these are the sum of all individuals in the team.
 
-``` {r}
+``` {r id shows, remove team results}
 head(shows)
 summary(shows)
 
@@ -434,8 +452,49 @@ shows <- shows %>%
   filter(!str_detect(comp_title, "Team"))
 ```
 
-I investigate other sources of outliers in the data.
+A histogram is used to identify any other outliers. There is a peak between 0 and 20, which is highly unusual. These points are exclusively from young horse shows, which have different scoring systems. All young horse shows are removed from the dataset, leaving an approximately normal distribution of show scores. Althougher the dataset contains 16,352 show records, 548 of which are NA.
 
+``` {r investigate outliers}
+hist(shows$score)
+
+shows %>%
+  group_by(comp_title) %>%
+  summarise(mean = mean(score, na.rm = T)) %>%
+  filter(mean < 30)
+
+shows %>%
+  filter(score < 30)
+
+shows <- shows %>% 
+  filter(!str_detect(comp_title, "YH"))
+
+summary(shows$score)
+nrow(shows)
+```
+
+I hypothesise that these NAs may represent individuals who did not complete competition, due to retirement, for example. There are three categories for non-completion in this dataset: EL (elimination), DSQ (disqualification), and WD (withdrawn). There are 125, 7, and 148 occurances of these, respectively, within the data. The scores are always NA when one of these labels is present. Scores for these individuals will be imputed in the exploratory analysis. 
+
+This leaves 218 unaccounted for NA scores. They are enriched for "final classifications" which would be an overall position, rather than a single show's score. I remove these, and leave the rest for investigations of missingness during exploratory analyses. 
+
+This is all the cleaning required for the show results. They will be subject to further simple manipulations (e.g. mean per combination) later. 
+
+``` {r}
+unique(shows$position)
+shows %>%
+  filter(position == "RET" | position == "DSQ" | position == "WD") %>%
+  count(position)
+
+shows %>%
+  filter(!(position == "RET" | position == "DSQ" | position == "WD")) %>%
+  filter(is.na(score)) %>%
+  count(comp_title)
+
+shows <- shows %>% 
+  filter(!str_detect(comp_title, "Final Classification"))
+
+sum(is.na(shows$horse_id))
+sum(is.na(shows$rider_id))
+```
 
 
 
