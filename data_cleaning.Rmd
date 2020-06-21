@@ -174,59 +174,102 @@ compareAllDupRows <- function(dupids, df, id_type) {
   return(outmatrix)
 }
 
-compareAllDupRows(dup_ids, ped, "horse_id") + compareAllDupRows(dup_uelns, ped, "horse_ueln")
+pass1 <- compareAllDupRows(dup_ids, ped, "horse_id") + compareAllDupRows(dup_uelns, ped, "horse_ueln")
+pass1
 ```
 
-An ID may have one record that contains `dam_ueln`, `horse_ueln`, `sire_id`, or `dam_id` but is NA for this field in the duplicated record. In such cases, it makes sense to remove the record that has the least information. Duplicated IDs are most likely to differ in their `dam_ueln` and their `sex_raw`, even when both of these fields have data. In the case of `sex_raw`, this is likely to be due to a coding of the same individual as `stallion` and `male`, for example, as all duplicated records are in agreement about cleaned sex. Therefore, we can ignore this. More concerning is the inconsistency in dam ids. 
+An ID may have one record that contains `dam_ueln`, `horse_ueln`, `sire_id`, or `dam_id` but is NA for this field in the duplicated record. In such cases, it makes sense to remove the record that has the least information. Duplicated IDs are most likely to differ in their `dam_ueln` and their `sex_raw`, even when both of these fields have data. In the case of `sex_raw`, this is likely to be due to a coding of the same individual as `stallion` and `male`, for example, as all duplicated records are in agreement about cleaned sex. Therefore, we can ignore this. More concerning is the inconsistency in dam uelns. 
 
-``` {r}
-#remove rows which differ only in sex
+``` {r remove sex duplicates}
+# remove rows that differ by only sex
+ped_old <- ped
+ped$sex_raw <- NULL
+ped <- distinct(ped)
 
+dup_uelns <- ped %>%
+  filter(!is.na(horse_ueln)) %>%
+  count(horse_ueln) %>%
+  filter(n > 1) %>%
+  pull(horse_ueln)
 
-#remove rows which have less data than their duplicate 
-idLessInfoRows <- function(id, df, id_type) {
-  df <- df[!is.na(df[[id_type]]),]
-  rowNums <- which(df[[id_type]]==id)
-  for (iii in rowNums) {
-    for (jjj in rowNums) {
-      if (iii < jjj) {
-        if (sum(is.na(df[iii,])) == sum(is.na(df[jjj,]))) {
-        } else {
-          if (sum(is.na(df[iii,])) > sum(is.na(df[jjj,]))) {
-            return(iii)
-          }
-          if (sum(is.na(df[iii,])) < sum(is.na(df[jjj,]))) {
-            return(jjj)
-          }
-        }
-      }
+dup_ids <- ped %>%
+  filter(!is.na(horse_id)) %>%
+  count(horse_id) %>%
+  filter(n > 1) %>%
+  pull(horse_id)
+
+nrow(ped)
+pass2 <- compareAllDupRows(dup_ids, ped, "horse_id") + compareAllDupRows(dup_uelns, ped, "horse_ueln")
+pass2
+
+ped %>%
+  filter(horse_id %in% dup_ids) %>%
+  arrange(horse_id)
+
+ped %>% 
+  filter(horse_ueln %in% dup_uelns) %>%
+  arrange(horse_ueln)
+```
+
+```{r remove less data duplicates}
+# split dup uelns and ids into those that differ by NA only and those with different data 
+identifyRowsDifferingbyNA <- function(id, dupRows) {
+  if (is.na(dupRows[1,"dam_ueln"] == dupRows[2,"dam_ueln"]) & (is.na(dupRows[1,"horse_ueln"] == dupRows[2,"horse_ueln"]) | dupRows[1,"horse_ueln"] == dupRows[1,"horse_ueln"])) {
+    return(id)
+  }
+}
+
+getRowsDifferingByNA <- function(id_list, df, id_type) {
+  rowsDifferentByNA <- c()
+  for (id in id_list) {
+    dupRows <- getDupRows(id, df, id_type)
+    rowsDifferentByNA <- append(rowsDifferentByNA, identifyRowsDifferingbyNA(id, dupRows), length(rowsDifferentByNA))
+  }
+  return(rowsDifferentByNA)
+}
+
+uelns_differbyna <- getRowsDifferingByNA(dup_uelns, ped, "horse_ueln")
+ped %>%
+  filter(horse_ueln %in% uelns_differbyna) %>%
+  arrange(horse_ueln)
+
+ids_differbyna <- getRowsDifferingByNA(dup_ids, ped, "horse_id")
+ped %>%
+  filter(horse_id %in% ids_differbyna) %>%
+  arrange(horse_id)
+
+ped %>%
+  filter(!(horse_ueln %in% uelns_differbyna) & horse_ueln %in% dup_uelns) %>%
+  arrange(horse_ueln)
+
+ped %>%
+  filter(!(horse_id %in% ids_differbyna) & horse_id %in% dup_ids) %>%
+  arrange(horse_id)
+
+test <- getDupRows("103HO85", ped, "horse_id")
+sum(is.na(test[1,]))
+sum(is.na(test[2,]))
+
+removeRowsWithLessData <- function(id_list, df, id_type) {
+  li_toremove <- c()
+  for (id in id_list) {
+    li <- which(df[[id_type]]==id)
+    if (sum(is.na(df[li[1],])) > sum(is.na(df[li[2],]))) {
+      li_toremove <- append(li_toremove, li[1], length(li_toremove))
+    }
+    if (sum(is.na(df[li[1],])) < sum(is.na(df[li[2],]))) {
+      li_toremove <- append(li_toremove, li[2], length(li_toremove))
     }
   }
+  return(df[-li_toremove,])
 }
 
-listLessInfoRows <- function(dupids, df, id_type) {
-  to_remove <- list()
-  counter <- 1
-  for (id in dupids) {
-    to_remove[[counter]] <- idLessInfoRows(id, df, id_type)
-    counter <- counter + 1
-  }
-  return(compact(to_remove))
-}
+ped <- removeRowsWithLessData(ids_differbyna, ped, "horse_id")
+ped <- removeRowsWithLessData(uelns_differbyna, ped, "horse_ueln")
 
-rmLessInfoRows <- function(dupids, df, id_type) {
-  to_remove <- listLessInfoRows(dupids, df, id_type)
-  for (iii in 1:length(to_remove)) {
-    df <- df[-c(to_remove[[iii]]),]
-  }
-  return(df)
-}
-
-test <- listLessInfoRows(dup_ids, ped, "horse_id")
-length(listLessInfoRows(dup_uelns, ped, "horse_ueln"))
-
-ped <- rmLessInfoRows(dup_ids, ped, "horse_id")
-ped <- rmLessInfoRows(dup_uelns, ped, "horse_ueln")
+nrow(ped)
+pass2 <- compareAllDupRows(dup_ids, ped, "horse_id") + compareAllDupRows(dup_uelns, ped, "horse_ueln")
+pass2
 ```
 
 ### Individuals Without Rows
