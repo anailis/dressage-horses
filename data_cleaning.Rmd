@@ -397,6 +397,20 @@ ped$dob <- NULL
 head(ped)
 ```
 
+### Ensure Each Sire has a Row
 
+There are 85 sires listed in the `sire` column that do not yet have their own record. Here I give these individuals their own rows, with everything other than ID set to NA.
+
+``` {r}
+sires_wo_rows <- ped %>%
+  filter(!(sire %in% horse_id) & !(sire %in% horse_ueln)) %>%
+  select(sire) %>%
+  distinct() %>%
+  pull()
+
+ped <- rbind(ped, data.frame(horse_id = NA, sex = 1, horse_ueln = sires_wo_rows, yob = NA, sire = NA))
+```
+
+## Clean the Shows Table
 
 
