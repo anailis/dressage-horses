@@ -29,6 +29,8 @@ dim(ped)
 
 The pedigree table contains 1081 rows and 8 columns. Each row represents a horse, who is identified either by the column `horse_id` or the column `horse_ueln`. The goal of tidying is to obtain a pedigree dataframe where every individual has a single, unique identifier and is contained within their own row. This includes individuals who are at the outset only included in the `sire_id`/`sire_ueln` or `dam_id`/`dam_ueln` columns. Duplicate data is likely to be a problem due to the scraping method used to obtain the data - duplicate rows should be identified and removed. NA should be consistently used to represent missing values (e.g. absence of recorded parents).`sex` should be recoded as 0 for females, 1 for males, and NA for missing data. `dob` refers to the horse's date of birth, which is given in one of two formats in the raw dataframe: DD/MM/YYYY or DD/MM/YYYY (age). These will be tidied into year of birth for each individual (YYYY).  
 
+After attempting to clean the ped dataframe, I have come to the decision to omit dam information from any final analyses. This is because it is plagued with several issues that indicate it is of low quality. One individual can be listed multiple times with different dams and some dams are mislabelled as males or sires. 
+
 ``` {r describing shows}
 head(shows)
 dim(shows)
@@ -214,26 +216,26 @@ ped %>%
 ```{r remove less data duplicates}
 # split dup uelns and ids into those that differ by NA only and those with different data 
 identifyRowsDifferingbyNA <- function(id, dupRows) {
-  if (is.na(dupRows[1,"dam_ueln"] == dupRows[2,"dam_ueln"]) & (is.na(dupRows[1,"horse_ueln"] == dupRows[2,"horse_ueln"]) | dupRows[1,"horse_ueln"] == dupRows[1,"horse_ueln"])) {
+  if (sum(is.na(dupRows[1]) != sum(is.na(dupRows[2])))) {
     return(id)
   }
 }
 
-getRowsDifferingByNA <- function(id_list, df, id_type) {
-  rowsDifferentByNA <- c()
+getIdsDifferingByNA <- function(id_list, df, id_type) {
+  idsDifferentByNA <- c()
   for (id in id_list) {
     dupRows <- getDupRows(id, df, id_type)
-    rowsDifferentByNA <- append(rowsDifferentByNA, identifyRowsDifferingbyNA(id, dupRows), length(rowsDifferentByNA))
+    idsDifferentByNA <- append(idsDifferentByNA, identifyRowsDifferingbyNA(id, dupRows), length(idsDifferentByNA))
   }
-  return(rowsDifferentByNA)
+  return(idsDifferentByNA)
 }
 
-uelns_differbyna <- getRowsDifferingByNA(dup_uelns, ped, "horse_ueln")
+uelns_differbyna <- getIdsDifferingByNA(dup_uelns, ped, "horse_ueln")
 ped %>%
   filter(horse_ueln %in% uelns_differbyna) %>%
   arrange(horse_ueln)
 
-ids_differbyna <- getRowsDifferingByNA(dup_ids, ped, "horse_id")
+ids_differbyna <- getIdsDifferingByNA(dup_ids, ped, "horse_id")
 ped %>%
   filter(horse_id %in% ids_differbyna) %>%
   arrange(horse_id)
@@ -246,30 +248,56 @@ ped %>%
   filter(!(horse_id %in% ids_differbyna) & horse_id %in% dup_ids) %>%
   arrange(horse_id)
 
-test <- getDupRows("103HO85", ped, "horse_id")
-sum(is.na(test[1,]))
-sum(is.na(test[2,]))
-
 removeRowsWithLessData <- function(id_list, df, id_type) {
   li_toremove <- c()
   for (id in id_list) {
     li <- which(df[[id_type]]==id)
-    if (sum(is.na(df[li[1],])) > sum(is.na(df[li[2],]))) {
-      li_toremove <- append(li_toremove, li[1], length(li_toremove))
-    }
-    if (sum(is.na(df[li[1],])) < sum(is.na(df[li[2],]))) {
-      li_toremove <- append(li_toremove, li[2], length(li_toremove))
+    for (iii in 1:(length(li)-1)) {
+      if (sum(is.na(df[li[iii],])) > sum(is.na(df[li[iii+1],]))) {
+        li_toremove <- append(li_toremove, li[iii], length(li_toremove))
+      }
+      if (sum(is.na(df[li[iii],])) < sum(is.na(df[li[iii+1],]))) {
+        li_toremove <- append(li_toremove, li[iii+1], length(li_toremove))
+      }
     }
   }
   return(df[-li_toremove,])
 }
 
 ped <- removeRowsWithLessData(ids_differbyna, ped, "horse_id")
-ped <- removeRowsWithLessData(uelns_differbyna, ped, "horse_ueln")
 
-nrow(ped)
-pass2 <- compareAllDupRows(dup_ids, ped, "horse_id") + compareAllDupRows(dup_uelns, ped, "horse_ueln")
-pass2
+dup_uelns <- ped %>%
+  filter(!is.na(horse_ueln)) %>%
+  count(horse_ueln) %>%
+  filter(n > 1) %>%
+  pull(horse_ueln)
+
+dup_ids <- ped %>%
+  filter(!is.na(horse_id)) %>%
+  count(horse_id) %>%
+  filter(n > 1) %>%
+  pull(horse_id)
+
+ped %>%
+  filter(horse_id %in% dup_ids) %>%
+  arrange(horse_id)
+# why have some duplicates that differ only by NA been missed? FIX THIS SO ONLY DAMUELN IS NONZERO
+ped %>%
+  filter(horse_ueln %in% dup_uelns) %>%
+  arrange(horse_ueln)
+
+pass3 <- compareAllDupRows(dup_ids, ped, "horse_id") + compareAllDupRows(dup_uelns, ped, "horse_ueln")
+pass3
+```
+
+The current dataset will be set aside, so that informative missingness can be assessed at a later point. Ultimately, I will not use dams in the final analysis - I will restrict myself to sires. This is because records for dams are error-prone: mislabelled sexes and multiple dam records for single individuals are frequent. 
+
+``` {r}
+#for future analyses of these individuals 
+ped_dups <- ped
+ped <- ped %>%
+  filter(!(horse_id %in% dup_ids)) %>%
+  filter(!(horse_ueln %in% dup_uelns))
 ```
 
 ### Individuals Without Rows
@@ -312,11 +340,7 @@ ped %>%
   count()
 ```
 
-A test of quality is whether the sex is as expected for all of these individuals. Surprisingly, 8 individuals listed as dams are listed as male. This investigation also flags up another potential issue: when we retreive the records of these 64 dams, we obtain 67 rows. This is most likely an issue with the double ID system (individuals or their parents are represented more than once, using different combinations of IDs).
-
-Indeed, although there are 67 unique records, we observe duplicate UELNs and IDs when we look at these individually. Some of these can be removed by calling `distinct()` after filtering out the parental columns, which tells us that a single individual may currently have multiple records with different parents recorded (e.g. because a different identifier is used to refer to the parent in different cases). This issue of duplication is extremely prevalent in this dataset because of the nature of identifier system used by the source, and I will return to this to do further corrections later on. 
-
-Likewise for the sires, 100 sires correspond to 114 rows and duplicated UELNs and IDs are present. However, unlike the mares, all of the sires are listed as males.
+A test of quality is whether the sex is as expected for all of these individuals. Surprisingly, 6 individuals listed as dams are listed as male. This investigation also flags up another potential issue: when we retreive the records of these 64 dams, we obtain 67 rows. This is most likely an issue with the double ID system (individuals or their parents are represented more than once, using different combinations of IDs). However, unlike the mares, all of the sires are listed as males.
 
 ``` {r check for correct sex}
 ## dams
@@ -328,7 +352,7 @@ dam_ids <- ped %>%
 
 dam_records <- ped %>% 
   filter(horse_id %in% dam_ids | horse_ueln %in% dam_ids) %>%
-  select(horse_id, horse_ueln, sex, sex_raw)
+  select(horse_id, horse_ueln, sex)
 
 nrow(dam_records)
 aggr(dam_records, numbers = T, prop = c(T, F))
@@ -337,7 +361,6 @@ sum(table(dam_records$horse_id) > 1)
 sum(table(dam_records$horse_ueln) > 1)
 
 table(dam_records$sex)
-table(dam_records$sex_raw)
 
 ## sires
 sire_ids <- ped %>% 
@@ -348,7 +371,7 @@ sire_ids <- ped %>%
 
 sire_records <- ped %>% 
   filter(horse_id %in% sire_ids | horse_ueln %in% sire_ids) %>%
-  select(horse_id, horse_ueln, sex, sex_raw)
+  select(horse_id, horse_ueln, sex)
 
 nrow(sire_records)
 aggr(sire_records, numbers = T, prop = c(T, F))
@@ -359,24 +382,21 @@ sum(table(sire_records$horse_ueln) > 1)
 table(sire_records$sex)
 ```
 
-#### Dams Listed as Males
+#### Decision to Omit Dam Information
 
-I will have a brief look into how these 6 males mislabelled as dams (or vice versa) may have arisen. 
+This is the second inconsistency I have observed in this dam data, and thus I have chosen not to take it forward to future analyses. I also remove the now unnecessary `dob`, `sire_ueln` and `sire_id` columns.
 
-``` {r offspring of mislabelled dams}
-mislabelled_dams <- dam_records %>%
-  filter(sex == 1) %>%
-  select(horse_id, horse_ueln) %>%
-  distinct()
-
-mislabelled_dams
-
-ped %>%
-  filter(dam %in% mislabelled_dams$horse_id | dam %in% mislabelled_dams$horse_ueln)
-
-ped %>%
-  filter(horse_id %in% dup_ids) %>%
-  arrange(horse_id) 
+``` {r}
+ped_withdams <- ped
+ped$dam <- NULL
+ped$dam_ueln <- NULL
+ped$dam_id <- NULL
+ped$sire_ueln <- NULL
+ped$sire_id <- NULL
+ped$dob <- NULL
+head(ped)
 ```
+
+
 
 
