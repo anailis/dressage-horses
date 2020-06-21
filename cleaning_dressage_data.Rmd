@@ -1,0 +1,368 @@
+---
+title: "Dressage Data Cleaning"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Data were scraped into a SQLite3 database. 
+
+``` {r data extraction}
+# get raw data from sqlite3 database
+library(tidyverse)
+library(RSQLite)
+conn <- dbConnect(RSQLite::SQLite(), "dressage.db")
+
+ped <- dbGetQuery(conn,'SELECT * FROM pedigree')
+shows <- dbGetQuery(conn, 'SELECT * FROM show_results')
+```
+
+The data contains **x** rows and 8 columns. Each row represents a horse, who is identified either by the column `horse_id` or the column `horse_ueln`. The goal of tidying is to obtain a pedigree dataframe where every individual has a single, unique identifier and is contained within their own row. This includes individuals who are at the outset only included in the `sire_id`/`sire_ueln` or `dam_id`/`dam_ueln` columns. NA should be consistently used to represent missing values (e.g. absence of recorded parents).`sex` should be recoded as 0 for females, 1 for males, and NA for missing data. `dob` refers to the horse's date of birth, which is given in one of two formats in the raw dataframe: DD/MM/YYYY or DD/MM/YYYY (age). These will be tidied into year of birth for each individual (YYYY).  
+
+``` {r explore the data, include = F}
+ped <- as_tibble(ped)
+
+ped[ped==''] <- NA
+
+ped <- ped %>%
+  mutate_all(str_trim) %>%
+  distinct()
+
+dim(ped)
+head(ped)
+unique(ped$sex)
+unique(ped$dob)
+unique(ped$horse_id)
+unique(ped$horse_ueln)
+ped$horse_ueln
+ped$horse_id
+ped$dam_id
+ped$dam_ueln
+ped$sire_id
+ped$sire_ueln
+
+head(shows)
+```
+
+To begin, I will do the simplest cleaning tasks: standardising the sexes, obtaining the year of birth, and removing unnecessary parenthesised additions to ids.
+
+``` {r fix dob and sex}
+unique(ped$sex)
+
+ped <- ped %>%
+  mutate(sex=replace(sex, sex == "Mare", "0")) %>%
+  mutate(sex=replace(sex, sex == "Stallion", "1")) %>%
+  mutate(sex=replace(sex, sex == "Gelding", "1")) %>%
+  mutate(sex=replace(sex, sex == "Male", "1")) %>%
+  mutate(sex=replace(sex, sex == "Female", "0"))
+
+unique(ped$sex)
+
+
+ped$horse_id <- str_trim(str_remove(ped$horse_id, "\\(.*"))
+
+
+```
+
+Next, I will concentrate on individuals who are listed as sires or dams, but do not have their own rows. We need to give them their own rows, where their dams, sires and dob are NA, but their sex is dependent on whether they were listed as a sire or a dam. Having two ID systems poses a problem: a sire/dam may have an id, a ueln, or both.
+
+The aggregation plot below shows a concerning trend: individuals favour id identifiers, whereas parents favour ueln identifiers. It is possible that we have the same individual represented multiple times in the data, under two different identifiers. We can see from the plot that there are no cases when a sire or dam has both an id and a ueln. However, if an individual is a dam/sire but also has their own row, it may be possible to infer missing ids or uelns, as in the vast majority of cases horses with their own rows have both uelns and ids.
+
+
+``` {r id missingness}
+library(VIM)
+
+id_missingness <- ped %>%
+  select(horse_id, horse_ueln, sire_id, sire_ueln, dam_id, dam_ueln)
+
+aggr(id_missingness, numbers = T, prop = c(T, F))
+```
+
+Indeed, when we extract dams who have rows, their rows oftens have ids for those individuals, although these were missing in `dam_id`. **Later, I'll use these to fill in missing `dam_id`s**.
+
+Worryingly, however, some of these dams have their sex listed as male in the individual columns. Sex is also recorded in the show results: sex in the show results corresponds to the assigned sex in a horse's record in the pedigree. It is most likely, therefore, that these individuals have been incorrectly assigned as dams. Is it possible that they are sires instead? Offspring of these males listed as dams typically have sires listed too, so this seems unlikely.
+
+Do these mislabelled dams also act as sires in any case? Indeed, they do. In fact, sires who have been mislabelled as dams tend to be highly prolific. My best guess would be that these sires were *the sires of dams*. Sometimes, the sire of a dam is recorded, even when the dam herself has no identifier. Thus, this data was misentered. Nevertheless, we should remove these false dam records.
+
+``` {r}
+# obtains the ids/uelns of dams who have their own row
+dams_with_rows <- ped %>%
+  filter(!is.na(dam_id) | !is.na(dam_ueln)) %>%
+  select(dam_id, dam_ueln) %>%
+  filter(dam_id %in% ped$horse_id | dam_ueln %in% ped$horse_ueln) %>%
+  distinct()
+
+# obtains the rows in ped that represent dams in ped
+dam_rows <- ped %>%
+  filter(!is.na(horse_ueln)) %>%
+  inner_join(dams_with_rows, by = c("horse_ueln" = "dam_ueln")) %>%
+  select(horse_id, horse_ueln, sex)
+
+# males mislabelled as dams
+mislabelled_dams <- dam_rows %>%
+  filter(sex != 0)
+
+# mislabelled dams also recorded as male in show table
+shows %>%
+  select(horse_id, sex) %>%
+  distinct() %>%
+  inner_join(mislabelled_dams, by = c("horse_id" = "horse_id"))
+
+# mislabelled dams have sired horses
+ped %>%
+  filter(sire_ueln %in% mislabelled_dams$horse_ueln) %>%
+  count(sire_ueln)
+
+# look at offspring whose dams are sires
+ped %>%
+  filter(dam_ueln %in% mislabelled_dams$horse_ueln)
+```
+
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+``` {r fix dates}
+library(lubridate)
+
+# remove dob with bracketed ages
+ped$dob <- str_remove(ped$dob, "\\(.*")
+ped$dob <- str_trim(ped$dob)
+
+# obtain yob for long format dates (MM/DD/YY)
+longdates <- ped[str_detect(ped$dob, "/"),]
+longdates$dob <- dmy(longdates$dob)
+longdates$yob <- year(longdates$dob)
+
+shortdates <- ped[!str_detect(ped$dob, "/"),]
+is.na(shortdates$dob) <- shortdates$dob==''
+shortdates$yob <- shortdates$dob
+
+# reconstruct ped
+ped <- rbind(shortdates, longdates)
+
+ped$dob <- NULL
+rm(shortdates, longdates)
+```
+
+``` {r tidy sexes}
+ped[ped==''] <- NA
+unique(ped$sex)
+
+ped <- ped %>%
+  mutate(sex=replace(sex, sex == "Mare", "0")) %>%
+  mutate(sex=replace(sex, sex == "Stallion", "1")) %>%
+  mutate(sex=replace(sex, sex == "Gelding", "1")) %>%
+  mutate(sex=replace(sex, sex == "Male", "1")) %>%
+  mutate(sex=replace(sex, sex == "Female", "0"))
+
+unique(ped$sex)
+```
+
+## REMOVE DUPLICATED RECORDS
+
+``` {r duplicated records}
+# remove bracketed ids
+ped$horse_id <- str_remove(ped$horse_id, "\\(.*")
+
+ped <- ped %>% 
+  mutate_all(str_trim) %>%
+  distinct()
+
+# are there still duplicate uelns?
+sum(table(ped$horse_ueln) > 1) # yes
+which(table(ped$horse_ueln) > 1)
+
+dup_uelns <- ped %>%
+  filter(!is.na(horse_ueln)) %>%
+  count(horse_ueln) %>%
+  filter(n > 1) %>%
+  pull(horse_ueln)
+
+# are there still duplicate ids?
+sum(table(ped$horse_id) > 1) # yes
+which(table(ped$horse_id) > 1)
+
+dup_ids <- ped %>%
+  filter(!is.na(horse_id)) %>%
+  count(horse_id) %>%
+  filter(n > 1) %>%
+  pull(horse_id)
+
+ped %>%
+  filter(horse_id %in% dup_ids) %>%
+  arrange(horse_id)
+
+# id H0534255 has a row where ueln is id: remove from analysis
+# data generally consistent but some rows have more info than others: take rows with most data 
+
+ped %>%
+  filter(horse_ueln %in% dup_uelns) %>%
+  arrange(horse_ueln)
+
+# 276333332225993: one just lacks ID 
+# 528003199106398: one just lacks parents 
+# dam of 276333332243993 uncertain: remove from analysis
+# dam of 276331310590093 uncertain: remove from analysis 
+
+ped <- ped %>% 
+  filter(!horse_ueln %in% c("276333332243993", "276331310590093"),
+         !horse_ueln %in% "H0534255") %>%
+  mutate(count_na = rowSums(is.na(.))) %>%
+  group_by(horse_id) %>%
+  filter(count_na == max(count_na)) %>%
+  ungroup(horse_id) %>%
+  group_by(horse_ueln) %>%
+  filter(count_na == max(count_na)) %>%
+  ungroup() %>%
+  distinct()
+
+# any duplicates left? 
+sum(table(ped$horse_id) > 1) # no
+sum(table(ped$horse_ueln) > 1) #no
+
+rm(dup_ids, dup_uelns)
+```
+
+
+``` {r assign new ids}
+library(janitor)
+
+# create df that acts as id dictionary
+ped <- ped %>%
+  unite(fei_id, horse_ueln, horse_id, sep = "", na.rm = T, remove = F)
+id_dict <- data.frame(ped$fei_id, ped$horse_id, ped$horse_ueln, stringsAsFactors = F)
+colnames(id_dict) <- c("fei_id", "id", "ueln")
+
+# check whether all sires and dams that are also in the horses columns have both ids and uelns before they are merged 
+sum(id_dict$id %in% unique(ped$dam_id))
+sum(id_dict$ueln %in% unique(ped$dam_ueln))
+sum(id_dict$id %in% unique(ped$sire_id))
+sum(id_dict$ueln %in% unique(ped$sire_ueln))
+
+# insert the missing ids for the sires and dams 
+ped$dam_id <- ped %>%
+  select(dam_ueln, dam_id) %>%
+  left_join(id_dict, by = c("dam_ueln" = "ueln"), na_matches = "never") %>%
+  mutate(dam_id = ifelse(is.na(dam_id), id, dam_id)) %>%
+  pull(dam_id)
+
+ped$sire_id <- ped %>%
+  select(sire_ueln, sire_id) %>%
+  left_join(id_dict, by = c("sire_ueln" = "ueln"), na_matches = "never") %>%
+  mutate(sire_id = ifelse(is.na(sire_id), id, sire_id)) %>%
+  pull(sire_id)
+
+ped <- ped %>%
+  unite(sire_fei_id, sire_ueln, sire_id, sep = "", na.rm = T, remove = F) %>%
+  unite(dam_fei_id, dam_ueln, dam_id, sep = "", na.rm = T, remove = F)
+
+
+# incorporate base generation individuals into id_dict
+basegen_dams <- ped %>%
+  filter((!dam_fei_id %in% id_dict$fei_id)) %>%
+  select(dam_fei_id, dam_id, dam_ueln) %>%
+  distinct() %>%
+  rename(fei_id = dam_fei_id, id = dam_id, ueln = dam_ueln)
+
+basegen_sires <- ped %>%
+  filter((!sire_fei_id %in% id_dict$fei_id)) %>%
+  select(sire_fei_id, sire_id, sire_ueln) %>%
+  distinct() %>%
+  rename(fei_id = sire_fei_id, id = sire_id, ueln = sire_ueln)
+
+basegen <- rbind(basegen_dams, basegen_sires)
+id_dict <- remove_empty(rbind(basegen, id_dict), which = "rows")
+id_dict
+rm(basegen, basegen_dams, basegen_sires)
+
+# add id_dict to database
+#dbWriteTable(conn, "id_dict", id_dict)
+
+clean_ped <- id_dict %>%
+  full_join(ped, by = "fei_id", na_matches = "never") %>%
+  select(fei_id, sire_fei_id, dam_fei_id, horse_id, yob, sex)
+
+nrow(clean_ped)
+length(unique(clean_ped$fei_id))
+
+library(visPedigree)
+
+final_ped <- tidyped(clean_ped)
+visped(final_ped, outline = F, file = "complete_ped.pdf")
+clean_ped[clean_ped==''] <- NA
+final_ped$Sex <- NULL
+# add phenotypes to database
+#dbWriteTable(conn, "clean_ped", clean_ped)
+```
+
+## CLEAN THE SHOWS
+
+Riders often retire their horses before finishing a poor performance to prevent tarnishing that horse's record. A horse that is retired frequently should ideally be penalised for this in this analysis. This dataset has 24 retirements. I am going to assume that the scores of retired horses fall within the bottom 10th percentile and are drawn from a normal distribution. Thus, retired horses are penalised by low scores, without skewing the overall shape of the distribution of the scores. 
+
+Withdrawals (WD) indicate a horse not competing, and are removed from the data. 
+
+Elimination or disqualification results from misconduct, deviation from the course, rider falls, or severe misbehaviour of the horse. It is less clear that these show results simply represent low scoring horses, or that the label of elimination is necessarily due to the performance of the combination (elimination can occur due to things like ill-fitting tack). For this reason, I made the decision to remove eliminated or disqualified records from the analysis without penalising the horse.   
+
+Justify use of mean. **Means need to be for a horse rider combination, not for a horse.**
+
+``` {r}
+head(shows)
+shows$show_id <- c(1:nrow(shows))
+
+# 9 individuals not in ped to be removed
+sum(!unique(shows$horse_id) %in% id_dict$id)
+shows <- shows %>% 
+  filter(horse_id %in% id_dict$id)
+
+# remove team results 
+unique(shows$comp_title)
+shows <- shows %>%
+  filter(!str_detect(comp_title, "Team"))
+
+# investigate outliers 
+# young horses are scored on a different scale - remove young horse shows 
+# remove final classifications and historical positions which have NA scores
+hist(shows$score)
+shows <- shows %>% 
+  filter(!str_detect(comp_title, "YH")) %>%
+  filter(!str_detect(comp_title, "Final Classification")) %>%
+  filter(!str_detect(comp_title, "Historical Rule"))
+
+hist(shows$score)
+
+# look at retired horses
+unique(shows$position)
+range(shows$score, na.rm = T)
+ret_shows <- shows %>%
+  filter(position == "RET") %>%
+  pull(show_id)
+
+# assign retired individual's scores
+quantile(shows$score, probs = c(0, 0.05, 0.1), na.rm = T)
+shows_10 <- shows %>%
+  filter(score <= 67.83) %>%
+  pull(score)
+ret_scores <- rnorm(24, mean = mean(shows_10), sd = sqrt(var(shows_10)))
+
+shows <- shows %>%
+  mutate(score = ifelse(show_id %in% ret_shows, ret_scores, score)) %>%
+  filter(!position == "WD" | position == "EL" | position == "DSQ")
+
+# get the number of shows per combination!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+phenotypes <- shows %>%
+  group_by(horse_id, rider_id) %>%
+  summarize(mean_score = mean(score)) %>%
+  left_join(id_dict, by = c("horse_id" = "id")) %>%
+  select(horse_id, fei_id, rider_id, mean_score)
+
+head(phenotypes)
+nrow(phenotypes)
+
+hist(phenotypes$mean_score)
+
+# add phenotypes to database
+#dbWriteTable(conn, "phenotypes", phenotypes)
+```
+
+
