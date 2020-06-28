@@ -1,0 +1,137 @@
+---
+title: "Exploratory Analysis"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+The SQLite database `dressage.db` contains the cleaned pedigree and show data in the tables `clean_pedigree` and `clean_shows`, respectively. 
+
+``` {r}
+library(tidyverse)
+library(RSQLite)
+
+conn <- dbConnect(RSQLite::SQLite(), "dressage.db")
+
+ped <- dbGetQuery(conn,'SELECT * FROM clean_pedigree')
+shows <- dbGetQuery(conn, 'SELECT * FROM clean_shows')
+```
+
+In this exploratory analyses, I want to better understand how well sires and riders are represented in my data, examine the data for covariates, explore and deal with any missing data, and come up with a model.
+
+``` {r}
+summary(ped)
+
+for (iii in c("horse_id", "horse_ueln", "sire", "sex")) {
+  ped[[iii]] <- as.factor(ped[[iii]])
+}
+
+ped$yob <- as.numeric(ped$yob)
+
+summary(shows)
+
+for (iii in c("horse_id", "sex", "rider_id")) {
+  shows[[iii]] <- as.factor(shows[[iii]])
+}
+
+for (iii in c("score", "yob")) {
+  shows[[iii]] <- as.numeric(shows[[iii]])
+}
+```
+
+## Summary Information
+
+The dataset contains information on 
+
+``` {r summary stats}
+
+
+```
+
+## Creating a Measure of Success
+
+I am interested in using this dataset to explore what factors influence success in dressage horses. So first, I need to use the available data to create a measure of success. This will be derived from the show `score`. This data has a single outlier of 0 and 413 NAs. Given that 0 is an impossible score, I simply omit this outlier.
+
+``` {r outliers}
+summary(shows$score)
+
+shows <- shows %>%
+  filter(score > 0 | is.na(score))
+
+hist(shows$score)
+```
+
+As I established when cleaning the data, most of the NAs represent failure to complete the test (DSQ = disqualified, WD = withdrawn, RET = retired, EL = eliminated). These classifications are never associated with a non-NA score. Only 55 NAs are not explained by failure to complete the test (out of 14,870 shows). I want to know whether these are randomly missing, or associated with any other feature of the data (e.g. horse, rider, show type). All shows with NA in both `score` and `position` were attributed to a single horse, ID SWE04871, and these are the only shows listed for this individual. Thus, I am forced to omit this individual. 
+
+``` {r missing scores}
+shows %>%
+  filter((position %in% c("DSQ", "EL", "RET", "WD"))) %>%
+  count(score)
+
+shows %>%
+  filter(is.na(score)) %>%
+  filter(!(position %in% c("DSQ", "EL", "RET", "WD"))) %>%
+  count(horse_id)
+
+shows %>%
+  filter(is.na(position) & is.na(score)) %>%
+  count(horse_id)
+
+shows %>%
+  filter(horse_id == "SWE04871") %>%
+  count()
+
+shows <- shows %>%
+  filter(horse_id != "SWE04871")
+
+ped <- ped %>%
+  filter(horse_id != "SWE04871")
+```
+
+The remaining 5 NA scores are attributable to just two other horses, ids GER43431 and NED04088. Unlike SWE04871, these horses have plenty of other non-NA shows. Three of these were "historical rules", and are the only "historical rules" in the dataset. I could not find any further information on the meaning of this classification, but I assume that it will not be relevant to my analyses, and thus omit them. The other shows are freestyle to music, but there are plenty of these shows with non-NA score entries (~2500). 
+
+``` {r}
+shows %>% 
+  filter(horse_id %in% c("GER43431", "NED04088")) %>%
+  count(horse_id)
+
+shows %>%
+  filter(is.na(score)) %>%
+  filter(!(position %in% c("DSQ", "EL", "RET", "WD"))) %>%
+  count(comp_title)
+
+shows[str_detect(shows$comp_title, "Hist"),]
+
+shows <- shows %>%
+  filter(!comp_title == "Hist - Historical Rule")
+
+nrow(shows[str_detect(shows$comp_title, "Music"),])
+
+shows %>%
+  filter(is.na(score)) %>%
+  filter(!(position %in% c("DSQ", "EL", "RET", "WD"))) %>%
+  count(event_type)
+
+nrow(shows[str_detect(shows$event_type, "CH-EU-J-D"),])
+
+shows %>%
+  filter(is.na(score)) %>%
+  filter(!(position %in% c("DSQ", "EL", "RET", "WD"))) %>%
+  count(rider_id)
+```
+
+## Relatedness
+
+## Covariates
+
+``` {r}
+plot(score~yob, data = shows)
+```
+
+## Missingness
+
+## Designing the Model
