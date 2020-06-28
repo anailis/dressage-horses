@@ -107,7 +107,7 @@ sum(table(ped$horse_ueln) > 1)
 
 getDupIds <- function(df, id_type) {
   list <- df %>%
-    count_(id_type) %>%
+    count(!!sym(id_type)) %>%
     filter(n > 1) %>%
     pull(id_type)
   
@@ -468,9 +468,7 @@ nrow(shows)
 
 I hypothesise that these NAs may represent individuals who did not complete competition, due to retirement, for example. There are three categories for non-completion in this dataset: EL (elimination), DSQ (disqualification), and WD (withdrawn). There are 125, 7, and 148 occurances of these, respectively, within the data. The scores are always NA when one of these labels is present. Scores for these individuals will be imputed in the exploratory analysis. 
 
-This leaves 218 unaccounted for NA scores. They are enriched for "final classifications" which would be an overall position, rather than a single show's score. I remove these, and leave the rest for investigations of missingness during exploratory analyses. 
-
-This is all the cleaning required for the show results. They will be subject to further simple manipulations (e.g. mean per combination) later. 
+This leaves 218 unaccounted for NA scores. They are enriched for "final classifications" which would be an overall position, rather than a single show's score. I remove these, and leave the rest for investigations of missingness during 
 
 ``` {r}
 unique(shows$position)
@@ -490,9 +488,36 @@ sum(is.na(shows$horse_id))
 sum(is.na(shows$rider_id))
 ```
 
-``` {r}
-#check sex and dob match that in pedigree!
+The sex and yob columns need to be cleaned as for `ped`.
 
+``` {r clean sex and dob}
+shows <- shows %>%
+  mutate(sex=replace(sex, sex == "Mare", "0")) %>%
+  mutate(sex=replace(sex, sex == "Stallion", "1")) %>%
+  mutate(sex=replace(sex, sex == "Gelding", "1")) %>%
+  mutate(sex=replace(sex, sex == "Male", "1")) %>%
+  mutate(sex=replace(sex, sex == "Female", "0"))
+
+table(shows$sex)
+
+shows$dob <- str_trim(str_remove(shows$dob, "^[^-]*-"))
+
+tail(shows$dob)
+
+shows$yob <- year(dmy(shows$dob))
+
+tail(shows$yob)
+```
+
+The pedigree and the shows column agree about the year of birth and the sex of every horse.
+
+``` {r}
+ped %>%
+  inner_join(., shows, by = "horse_id") %>%
+  select(horse_id, sex.y, sex.x, yob.x, yob.y) %>%
+  distinct() %>%
+  count(horse_id) %>%
+  filter(n > 1)
 ```
 
 ``` {r update database}
