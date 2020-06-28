@@ -20,8 +20,6 @@ conn <- dbConnect(RSQLite::SQLite(), "dressage.db")
 
 ped <- dbGetQuery(conn,'SELECT * FROM pedigree')
 shows <- dbGetQuery(conn, 'SELECT * FROM show_results')
-
-dbDisconnect(conn)
 ```
 
 ``` {r describing ped}
@@ -59,7 +57,7 @@ dim(ped)
 
 ### Clean Sex Column
 
-Next, I will standardise the sexes and obtain year of birth. Although the distinction between geldings and stallions may be informative, 140 male individuals are not distinguished as stallion or gelding. For now, I will collapse all males into a single category (1), but I retain a copy of the `sex` column (`sex_raw`) in case I would like to come back to this. 
+Next, I will standardise the sexes and obtain year of birth. Although the distinction between geldings and stallions may be informative, 140 male individuals are not distinguished as stallion or gelding. For now, I will collapse all males into a single category (1). 
 
 ``` {r standardise sex}
 table(ped$sex)
@@ -174,6 +172,11 @@ identifyMatches <- function(row1, row2, outmatrix) {
 compareDupRows <- function(id, df, id_type) {
   outmatrix <- makeOutputMatrix(df)
   duprows <- getDupRows(id, df, id_type)
+  
+  if (nrow(duprows) <= 1) {
+    return("ID is not a duplicate.")
+  }
+  
   for (iii in 1:nrow(duprows)) {
     for (jjj in 1:nrow(duprows)) {
       if (iii < jjj) {
@@ -199,11 +202,19 @@ pass1
 
 An ID may have one record that contains `dam_ueln`, `horse_ueln`, `sire_id`, or `dam_id` but is NA for this field in the duplicated record. In such cases, it makes sense to remove the record that has the least information. More concerning is the inconsistency in dam uelns: where the same horse is recorded twice, with two different dams listed.
 
-```{r remove less data duplicates}
+```{r find rows differing by na}
 # split dup uelns and ids into those that differ by NA only and those with different data 
 identifyRowsDifferingbyNA <- function(id, dupRows) {
-  if (sum(is.na(dupRows[1]) != sum(is.na(dupRows[2])))) {
-    return(id)
+  if (nrow(dupRows) <= 1) {
+    return("ID is not a duplicate.")
+  }
+  
+  for (iii in 1:nrow(dupRows)) {
+    for (jjj in 1:nrow(dupRows)) {
+      if (iii < jjj & sum(is.na(dupRows[1,])) != sum(is.na(dupRows[2,]))) {
+        return(id)
+      }
+    }
   }
 }
 
@@ -211,46 +222,57 @@ getIdsDifferingByNA <- function(id_list, df, id_type) {
   idsDifferentByNA <- c()
   for (id in id_list) {
     dupRows <- getDupRows(id, df, id_type)
-    idsDifferentByNA <- append(idsDifferentByNA, identifyRowsDifferingbyNA(id, dupRows), length(idsDifferentByNA))
+    idsDifferentByNA <- append(idsDifferentByNA, identifyRowsDifferingbyNA(id, dupRows), after = length(idsDifferentByNA))
   }
   return(idsDifferentByNA)
 }
+
+ids_differbyna <- getIdsDifferingByNA(dup_ids, ped, "horse_id")
+ped %>%
+  filter(horse_id %in% ids_differbyna) %>%
+  arrange(horse_id)
+```
+
+``` {r remove rows differing by na}
+getRowNumsToRemove <- function(id, df, id_type) {
+  li_toremove <- c()
+  li <- which(df[[id_type]]==id)
+  
+  for (iii in 1:(length(li)-1)) {
+    
+    if (sum(is.na(df[li[iii],])) > sum(is.na(df[li[iii+1],]))) {
+      li_toremove <- append(li_toremove, li[iii], length(li_toremove))
+    }
+    
+    if (sum(is.na(df[li[iii],])) < sum(is.na(df[li[iii+1],]))) {
+      li_toremove <- append(li_toremove, li[iii+1], length(li_toremove))
+    }
+    
+  }
+  
+  return(li_toremove)
+}
+
+rowsWithLessData <- function(id_list, df, id_type) {
+  li_toremove <- c()
+  
+  for (id in id_list) {
+    li_toremove <- append(li_toremove, getRowNumsToRemove(id, df, id_type), length(li_toremove))
+  }
+  
+  return(li_toremove)
+}
+
+ped <- ped[-(rowsWithLessData(ids_differbyna, ped, "horse_id")),]
+
+dup_uelns <- getDupIds(ped, "horse_ueln")
 
 uelns_differbyna <- getIdsDifferingByNA(dup_uelns, ped, "horse_ueln")
 ped %>%
   filter(horse_ueln %in% uelns_differbyna) %>%
   arrange(horse_ueln)
 
-ids_differbyna <- getIdsDifferingByNA(dup_ids, ped, "horse_id")
-ped %>%
-  filter(horse_id %in% ids_differbyna) %>%
-  arrange(horse_id)
-
-ped %>%
-  filter(!(horse_ueln %in% uelns_differbyna) & horse_ueln %in% dup_uelns) %>%
-  arrange(horse_ueln)
-
-ped %>%
-  filter(!(horse_id %in% ids_differbyna) & horse_id %in% dup_ids) %>%
-  arrange(horse_id)
-
-removeRowsWithLessData <- function(id_list, df, id_type) {
-  li_toremove <- c()
-  for (id in id_list) {
-    li <- which(df[[id_type]]==id)
-    for (iii in 1:(length(li)-1)) {
-      if (sum(is.na(df[li[iii],])) > sum(is.na(df[li[iii+1],]))) {
-        li_toremove <- append(li_toremove, li[iii], length(li_toremove))
-      }
-      if (sum(is.na(df[li[iii],])) < sum(is.na(df[li[iii+1],]))) {
-        li_toremove <- append(li_toremove, li[iii+1], length(li_toremove))
-      }
-    }
-  }
-  return(df[-li_toremove,])
-}
-
-ped <- removeRowsWithLessData(ids_differbyna, ped, "horse_id")
+ped <- ped[-(rowsWithLessData(uelns_differbyna, ped, "horse_ueln")),]
 
 dup_uelns <- getDupIds(ped, "horse_ueln")
 dup_ids <- getDupIds(ped, "horse_id")
@@ -261,13 +283,26 @@ pass2
 ped %>%
   filter(horse_id %in% dup_ids) %>%
   arrange(horse_id)
-# why have some duplicates that differ only by NA been missed? FIX THIS
+
 ped %>%
   filter(horse_ueln %in% dup_uelns) %>%
   arrange(horse_ueln)
 ```
 
-The current dataset will be set aside, so that informative missingness can be assessed at a later point. Ultimately, I will not use dams in the final analysis - I will restrict myself to sires. This is because records for dams are error-prone: mislabelled sexes and multiple dam records for single individuals are frequent. 
+One horse, with ID GER13813, has rows with the same number of NAs but different rows which have these NAs. I sort this one exception manually. 
+
+``` {r}
+ped <- ped %>%
+  mutate(horse_ueln = ifelse(horse_id == "GER13813", "276333330111490", horse_ueln))
+
+ped <- ped[-getRowNumsToRemove("GER13813", ped, "horse_id"),]
+
+dup_ids <- getDupIds(ped, "horse_id")
+pass3 <- compareAllDupRows(dup_ids, ped, "horse_id") + compareAllDupRows(dup_uelns, ped, "horse_ueln")
+pass3
+```
+
+The current dataset will be set aside, so that informative missingness can be assessed at a later point. 
 
 ``` {r}
 #for future analyses of these individuals 
@@ -297,7 +332,7 @@ parents_only <- ped %>%
 aggr(parents_only, numbers = T, prop = c(T, F))
 ```
 
-Given that there are no cases where a sire and dam have both a ueln and an id, we can paste these columns together to make the analysis easier. This leaves us with 129 dams and 179 sires in our dataset. Of these, 48 of the dams also have their own record and 87 of the sires have their own record. 
+Given that there are no cases where a sire and dam have both a ueln and an id, we can paste these columns together to make the analysis easier. This leaves us with 132 dams and 182 sires in our dataset. Of these, 52 of the dams also have their own record and 91 of the sires have their own record. 
 
 ``` {r create new sire and dam cols}
 ped <- ped %>% 
@@ -322,7 +357,7 @@ ped %>%
   count()
 ```
 
-A test of quality is whether the sex is as expected for all of these individuals. Surprisingly, 5 individuals listed as dams are listed as male. Unlike the mares, all of the sires are listed as males.
+A test of quality is whether the sex is as expected for all of these individuals. Surprisingly, 6 individuals listed as dams are listed as male. Unlike the mares, all of the sires are listed as males.
 
 ``` {r check for correct sex}
 ## dams
@@ -457,7 +492,12 @@ sum(is.na(shows$horse_id))
 sum(is.na(shows$rider_id))
 ```
 
+``` {r update database}
+dbWriteTable(conn, "clean_pedigree", ped, overwrite = T)
+dbWriteTable(conn, "clean_shows", shows, overwrite = T)
 
+dbDisconnect(conn)
+```
 
 
 
