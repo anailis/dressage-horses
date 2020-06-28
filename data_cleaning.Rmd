@@ -3,7 +3,7 @@ title: "Data Cleaning"
 output: html_document
 ---
 
-```{r setup, include=FALSE}
+```{r setup, include=FALSE, message=F}
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
@@ -11,8 +11,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 Data were scraped from the web into a SQLite3 database with two tables: one containing show results and one containing pedigree data.
 
-``` {r data extraction}
-# get raw data from sqlite3 database
+``` {r data extraction, warning = F, message = F}
 library(tidyverse)
 library(RSQLite)
 library(lubridate)
@@ -27,9 +26,7 @@ head(ped)
 dim(ped)
 ```
 
-The pedigree table contains 1081 rows and 8 columns. Each row represents a horse, who is identified either by the column `horse_id` or the column `horse_ueln`. The goal of tidying is to obtain a pedigree dataframe where every individual has a single, unique identifier and is contained within their own row. This includes individuals who are at the outset only included in the `sire_id`/`sire_ueln` or `dam_id`/`dam_ueln` columns. Duplicate data is likely to be a problem due to the scraping method used to obtain the data - duplicate rows should be identified and removed. NA should be consistently used to represent missing values (e.g. absence of recorded parents).`sex` should be recoded as 0 for females, 1 for males, and NA for missing data. `dob` refers to the horse's date of birth, which is given in one of two formats in the raw dataframe: DD/MM/YYYY or DD/MM/YYYY (age). These will be tidied into year of birth for each individual (YYYY).  
-
-After attempting to clean the ped dataframe, I have come to the decision to omit dam information from any final analyses. This is because it is plagued with several issues that indicate it is of low quality. One individual can be listed multiple times with different dams and some dams are mislabelled as males or sires. 
+The pedigree table contains 1081 rows and 8 columns. Each row represents a horse, who is identified either by the column `horse_id` or the column `horse_ueln`. The goal of tidying is to obtain a pedigree dataframe where every individual is contained within their own row. This includes individuals who are at the outset only included in the `sire_id`/`sire_ueln` or `dam_id`/`dam_ueln` columns. Duplicate data is likely to be a problem due to the scraping method used to obtain the data - duplicate rows should be identified and removed. NA should be consistently used to represent missing values (e.g. absence of recorded parents).`sex` should be recoded as 0 for females, 1 for males, and NA for missing data. `dob` refers to the horse's date of birth, which is given in one of two formats in the raw dataframe: DD/MM/YYYY or DD/MM/YYYY (age). These will be tidied into year of birth for each individual (YYYY).  
 
 ``` {r describing shows}
 head(shows)
@@ -73,18 +70,19 @@ ped <- ped %>%
   mutate(sex=replace(sex, sex == "Female", "0"))
 
 table(ped$sex)
+sum(is.na(ped$sex))
 ped$sex_raw <- NULL
 ped <- ped %>%
   distinct()
 ```
 
-This leaves us with 280 females, 701 males, and no individuals missing sex. 
+This leaves us with 280 females, 701 males, and 24 individuals missing sex. 
 
 ### Create yob Column
 
 I obtain the year of birth for each individual from the `dob` column. 
 
-``` {r create yob}
+``` {r create yob, warning = F}
 tail(ped$dob)
 
 ped$dob <- str_trim(str_remove(ped$dob, "\\(.*"))
@@ -321,7 +319,7 @@ It is likely that there are some individuals listed as sires or dams that do not
 
 The aggregation plot below shows a concerning trend: individuals favour id identifiers, whereas parents favour ueln identifiers. It is possible that we have the same individual represented multiple times in the data, under two different identifiers. We can see from the plot that there are no cases when a sire or dam has both an id and a ueln. However, if an individual is a dam/sire but also has their own row, it may be possible to infer missing ids or uelns, as in the vast majority of cases (~87%) horses with their own rows have both uelns and ids.
 
-``` {r id missingness}
+``` {r id missingness, echo = F}
 library(VIM)
 
 aggr(ped, numbers = T, prop = c(T, F))
@@ -490,6 +488,11 @@ shows <- shows %>%
 
 sum(is.na(shows$horse_id))
 sum(is.na(shows$rider_id))
+```
+
+``` {r}
+#check sex and dob match that in pedigree!
+
 ```
 
 ``` {r update database}
