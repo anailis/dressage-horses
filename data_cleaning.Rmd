@@ -1,6 +1,8 @@
 ---
 title: "Data Cleaning"
-output: html_document
+output:
+  html_document: default
+  pdf_document: default
 ---
 
 ```{r setup, include=FALSE, message=F}
@@ -101,6 +103,50 @@ ped$dob <- NULL
 
 Although initially I filtered out all identical rows, there is still a problem with duplicate IDs and UELNs arising in the data. 35 UELNs are present more than once in `horse_ueln`, and 41 IDs are present more than once in `horse_id`. I am going to remove this issue before proceeding any further. 
 
+``` {r}
+ped$sex <- as.character(ped$sex)
+ped$yob <- as.character(ped$yob)
+
+getDupIds <- function(df, id_type) {
+    idlist <- df %>% 
+        count(!!sym(id_type)) %>%
+        filter(n > 1) %>%
+        pull(id_type)
+    
+    idlist <- idlist[!is.na(idlist)]
+    
+    if (length(idlist) != 0) {
+        return(idlist) 
+    } else {
+        return("No duplicate IDs.")
+    }
+ }
+
+countRowDiffs <- function(dup_id, df, id_type) {
+    # change NAs to character so I can observe differences between rows
+    df[is.na(df)] <- "None"
+    rows <- df[df[[id_type]] == dup_id,]
+    
+    comparisons <- combn(nrow(rows), 2)
+    
+    for (col in 1:ncol(comparisons)) {
+        if (col == 1) {
+            output <- rows[comparisons[1,col],] != rows[comparisons[2,col],]
+        } else {
+            output <- output + (rows[comparisons[1,col],] != rows[comparisons[2,col],])
+        }
+    }
+    
+    return(output)
+}
+
+#do.call(rbind.data.frame, (map(getDupIds(ped, "horse_id"), countRowDiffs, ped, "horse_id")))
+#do.call(rbind.data.frame, (map(getDupIds(ped, "horse_ueln"), countRowDiffs, ped, "horse_ueln")))
+getDupIds(ped, "horse_ueln")
+getDupIds(ped, "horse_id")
+countRowDiffs("208333DW0700794", ped, "horse_ueln")
+```
+
 ``` {r id duplicates}
 sum(table(ped$horse_id) > 1)
 sum(table(ped$horse_ueln) > 1)
@@ -133,6 +179,11 @@ ped %>%
 ped %>% 
   filter(horse_ueln %in% dup_uelns) %>%
   arrange(horse_ueln)
+
+indices <- which(ped[["horse_id"]] == '102YA19')
+counts <- map_int(indices, function(x) sum(is.na(ped[x,])))
+counts
+sum(duplicated(counts))
 ```
 
 I prepare a series of functions that identify where duplicated rows differ (NA in both rows is counted as a match). 
@@ -298,6 +349,14 @@ ped <- ped[-getRowNumsToRemove("GER13813", ped, "horse_id"),]
 dup_ids <- getDupIds(ped, "horse_id")
 pass3 <- compareAllDupRows(dup_ids, ped, "horse_id") + compareAllDupRows(dup_uelns, ped, "horse_ueln")
 pass3
+```
+
+Now I return to the dams. There are 41 individuals that are listed twice, each record with a different dam. I wonder if this is because of the mislabelling of sires of dams as dams. 14 dams are also listed in the sire column. Unfortunately, none of these individuals are the sources of ID duplication, so this just identifies even more inconsistency in the dam data. Ultimately, I have chosen to omit the dams from the analysis because of the numerous inconsistencies I found in their data.
+
+``` {r investigate dams}
+ped %>%
+  filter(dam_ueln %in% sire_ueln & !is.na(dam_ueln) | dam_id %in% sire_id & !is.na(dam_id)) %>%
+  filter(dam_ueln %in% dup_uelns)
 ```
 
 The current dataset will be set aside, so that informative missingness can be assessed at a later point. 
