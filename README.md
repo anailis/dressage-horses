@@ -21,8 +21,9 @@ This made me wonder: if you were to bet money on the winner of a dressage show, 
 **Potential for follow up: mixed model analysis to identify whether the contribution of the horse or of the rider is more important to the combination's mean dressage score**
 
 ### Dressage scores may be somewhat heritable...
-
-![](../master/offspring.png)
+|  Sires mean dressage score correlate with the scores of their offspring  |  The pedigree structure of the top 100 dressage horses: blue lines are sires, black lines are the offspring of those sires     |
+|------------|-------------|
+![](../master/offspring.png) | ![](../master/pedigree.PNG)
 
 There is a strong positive correlation between the mean dressage score of a male horse with offspring (a sire) and the mean score of all of his offspring. This finding is typical of a heritable trait - that is, a trait with a genetic component. It seems likely that dressage score is likely to be somewhat affected by the genetics of the horse. For example, horses who carry genetic variants that predispose greater flexibility or strength might have a competitive edge. However, this correlation could also be explained by shared environment or other variables that covary with sire. 
 
